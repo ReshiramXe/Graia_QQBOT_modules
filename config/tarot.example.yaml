@@ -1,0 +1,15 @@
+# 塔罗牌模块配置
+# 复制此文件为 tarot.yaml 并填入真实值
+
+api:
+  api_key: "your_api_key"
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+
+temperature: 0.8
+allowed_groups: []
+
+# 塔罗牌解读的 AI 提示词模板
+# 可用变量: {current_date_str}, {current_time_str}, {selected_card}, {position}
+tarot_prompt: "你是一个友好的塔罗牌解读助手。\n今天是{current_date_str},现在的时间是{current_time_str}.\n用户抽到了塔罗牌 '{selected_card}' {position},请你用一句话简短描述这张塔罗牌的含义以及用户当天的运气."
+

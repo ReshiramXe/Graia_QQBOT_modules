@@ -1,0 +1,13 @@
+# 蘑菇音乐（宝音）模块配置
+# 复制此文件为 kinoko.yaml 并填入真实值
+
+# API 配置
+api:
+  kinoko:
+    api_key: "your_kinoko_api_key"
+    base_url: "http://your-music-api-domain.com"  # 音乐 API 基础地址
+
+# 下载路径配置
+download_paths:
+  base: "/path/to/download/folder"
+  sjmusic3: "/path/to/sjmusic3/folder"

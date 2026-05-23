@@ -1,0 +1,41 @@
+# 好友 AI 聊天模块配置
+# 复制此文件为 ai_bot_friend.yaml 并填入真实值
+
+# 数据库配置
+database:
+  host: "127.0.0.1"
+  user: "root"
+  passwd: "your_password_here"
+  port: 3306
+  db: "qqbot"
+  charset: "utf8mb4"
+
+# API 配置
+api:
+  deepseek:
+    api_key: "your_api_key"
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-chat"
+
+# 对话配置
+conversation:
+  max_history: 20
+  context_length: 5
+  temperature: 0.8
+  frequency_penalty: 0.5
+  max_tokens: 4000
+
+# 冷却配置
+cooldown:
+  enabled: true
+  normal_user_seconds: 15
+  voice_file: "data/voices/default.mp3"
+
+# 默认 AI 提示词
+ai_prompt_content_default: "你是一个友好的 AI 助手"
+
+# 允许的用户 ID 列表
+allowed_users: []
+
+# 管理员用户 ID（不受冷却限制）
+admin_user_id: 0

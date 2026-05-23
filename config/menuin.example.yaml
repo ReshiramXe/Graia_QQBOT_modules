@@ -1,0 +1,14 @@
+# 菜单管理模块配置
+# 复制此文件为 menuin.yaml 并填入真实值
+
+# 数据库配置
+database:
+  host: "127.0.0.1"
+  user: "root"
+  passwd: "your_password_here"
+  port: 3306
+  db: "qqbot"
+  charset: "utf8"
+
+# 管理员用户 ID 列表
+admin_user: []

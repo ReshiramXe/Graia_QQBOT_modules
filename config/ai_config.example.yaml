@@ -1,0 +1,48 @@
+# AI 群聊模块配置
+# 复制此文件为 ai_config.yaml 并填入真实值
+
+# API 密钥
+api_keys:
+  siliconflow: "your_siliconflow_api_key"
+  deepseek: "your_deepseek_api_key"
+  xiaoai: "your_xiaoai_api_key"
+  xi-ai: "your_xi_ai_api_key"
+  xai: "your_xai_api_key"
+  Kimi: "your_kimi_api_key"
+
+# 数据库配置
+database:
+  host: "127.0.0.1"
+  user: "root"
+  passwd: "your_password_here"
+  port: 3306
+  db: "qqbot"
+  charset: "utf8mb4"
+
+# AI 提示词 (prompt 0)
+ai_prompt01: "你是一个友好的 AI 助手"
+
+# 生成印象更新的提示词
+generate_impression_update_prompt: "请根据对话历史生成用户印象"
+
+# 反转印象文本的提示词
+reverse_impression_text: "请反转以下用户印象"
+
+# Bot 自身的 QQ ID
+bot_self_id: 0
+
+# 管理员用户 ID 列表
+admin_user_ids: []
+
+# 特权用户 ID 列表（可触发更多功能）
+privileged_user_ids: []
+
+# 特殊冷却时间的用户
+special_cooldown_users:
+  # user_id: cooldown_seconds
+
+# 使用 DeepSeek 模型的群组
+deepseek_groups: []
+
+# 默认冷却时间（秒）
+default_cooldown_time: 86400

@@ -1,0 +1,7 @@
+# 系统监控模块配置
+# 复制此文件为 psutil.yaml 并填入真实值
+
+api:
+  deepseek:
+    api_key: "your_deepseek_api_key"
+    balance_url: "https://api.deepseek.com/user/balance"

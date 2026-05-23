@@ -1,0 +1,18 @@
+# AI 自主回复模块配置
+# 复制此文件为 ai_recall.yaml 并填入真实值
+
+api:
+  api_key: "your_api_key"
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+
+prompt: "你是一个友好的 AI 助手，请在群聊中自然回复"
+temperature: 0.8
+message_limit: 10
+cooldown_time: 60
+
+# 群触发概率：群号 -> 触发概率(0.0-1.0)
+group_configs: {}
+
+# 允许的群列表
+allowed_groups: []
