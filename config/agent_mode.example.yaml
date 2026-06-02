@@ -42,6 +42,9 @@ persona:
     - list_directory: 浏览目录结构
     - search_files: 按模式搜索文件
     - sql_query: 查询数据库（仅限 SELECT）
+    - get_chat_history: 读取群聊最近消息记录
+    - search_chat_history: 按关键词搜索群聊历史
+    - get_user_impression_agent: 查询用户在群内的印象
 
     用中文回复，语气保持自然亲切。
 

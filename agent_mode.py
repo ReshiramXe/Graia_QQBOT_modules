@@ -326,6 +326,76 @@ async def tool_sql_query(query: str) -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
+async def tool_get_chat_history(group_id: int, count: int = 20) -> str:
+    """读取指定群的最近聊天消息记录"""
+    count = min(count, MAX_SQL_ROWS)
+    try:
+        with pymysql.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cursor:
+                sql = """SELECT member_name, message_text, message_time
+                         FROM group_chat_messages
+                         WHERE group_id = %s
+                         ORDER BY message_time DESC
+                         LIMIT %s"""
+                cursor.execute(sql, (group_id, count))
+                rows = cursor.fetchall()
+    except pymysql.MySQLError as e:
+        return f"[错误] 查询失败: {e}"
+
+    if not rows:
+        return f"群 {group_id} 暂无聊天记录"
+
+    lines = [f"群 {group_id} 最近 {len(rows)} 条消息:"]
+    for name, text, t in reversed(rows):
+        time_str = str(t) if t else ""
+        lines.append(f"  [{time_str}] {name}: {text}")
+    return "\n".join(lines)
+
+
+async def tool_search_chat_history(group_id: int, keyword: str, count: int = 20) -> str:
+    """按关键词搜索群聊历史消息"""
+    count = min(count, MAX_SQL_ROWS)
+    like = f"%{keyword}%"
+    try:
+        with pymysql.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cursor:
+                sql = """SELECT member_name, message_text, message_time
+                         FROM group_chat_messages
+                         WHERE group_id = %s AND message_text LIKE %s
+                         ORDER BY message_time DESC
+                         LIMIT %s"""
+                cursor.execute(sql, (group_id, like, count))
+                rows = cursor.fetchall()
+    except pymysql.MySQLError as e:
+        return f"[错误] 搜索失败: {e}"
+
+    if not rows:
+        return f"群 {group_id} 中未找到包含 '{keyword}' 的消息"
+
+    lines = [f"搜索 '{keyword}' 在群 {group_id} 找到 {len(rows)} 条:"]
+    for name, text, t in reversed(rows):
+        time_str = str(t) if t else ""
+        lines.append(f"  [{time_str}] {name}: {text}")
+    return "\n".join(lines)
+
+
+async def tool_get_user_impression(user_id: int, group_id: int) -> str:
+    """查询指定用户的印象"""
+    try:
+        with pymysql.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cursor:
+                sql = """SELECT impression
+                         FROM user_impressions
+                         WHERE user_id = %s AND group_id = %s"""
+                cursor.execute(sql, (user_id, group_id))
+                result = cursor.fetchone()
+                if result:
+                    return f"用户 {user_id} 在群 {group_id} 的印象: {result[0]}"
+                return f"用户 {user_id} 在群 {group_id} 暂无印象记录"
+    except pymysql.MySQLError as e:
+        return f"[错误] 查询失败: {e}"
+
+
 # ============================================================
 # 工具定义 (OpenAI Function Calling Schema)
 # ============================================================
@@ -398,6 +468,73 @@ TOOLS = [
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_chat_history",
+            "description": "读取指定群的最近聊天消息记录。用于了解群友在聊什么。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "group_id": {
+                        "type": "integer",
+                        "description": "要查询的群号"
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "返回的消息条数，默认 20，最多 100"
+                    }
+                },
+                "required": ["group_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_chat_history",
+            "description": "按关键词搜索群聊历史消息。用于查找群友之前讨论过的内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "group_id": {
+                        "type": "integer",
+                        "description": "要搜索的群号"
+                    },
+                    "keyword": {
+                        "type": "string",
+                        "description": "搜索关键词"
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "返回的消息条数，默认 20，最多 100"
+                    }
+                },
+                "required": ["group_id", "keyword"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_user_impression_agent",
+            "description": "查询指定用户在群内的印象记录。用于了解某个群友的性格特点。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "integer",
+                        "description": "要查询的用户 QQ ID"
+                    },
+                    "group_id": {
+                        "type": "integer",
+                        "description": "群号"
+                    }
+                },
+                "required": ["user_id", "group_id"]
+            }
+        }
     }
 ]
 
@@ -406,6 +543,9 @@ TOOL_MAP = {
     "list_directory": tool_list_directory,
     "search_files": tool_search_files,
     "sql_query": tool_sql_query,
+    "get_chat_history": tool_get_chat_history,
+    "search_chat_history": tool_search_chat_history,
+    "get_user_impression_agent": tool_get_user_impression,
 }
 
 
