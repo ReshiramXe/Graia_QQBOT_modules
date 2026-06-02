@@ -198,4 +198,3 @@ CREATE TABLE user_impressions (
 
 ---
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
