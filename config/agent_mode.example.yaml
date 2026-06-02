@@ -57,6 +57,13 @@ llm:
   max_tokens: 4096
   max_iterations: 10              # agent 最大迭代轮数
 
+# ---- 上下文管理（自动总结节约 token） ----
+context_management:
+  enabled: true                     # 是否启用自动总结
+  max_context_chars: 8000           # 上下文超过此字符数时触发总结
+  keep_recent_messages: 6           # 保留最近 N 条完整消息
+  summary_model: "deepseek-chat"    # 用于总结的模型（可用轻量模型节省成本）
+
 # ---- 数据库配置 ----
 database:
   host: "127.0.0.1"

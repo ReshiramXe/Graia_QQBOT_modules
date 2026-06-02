@@ -57,6 +57,13 @@ LLM_TEMPERATURE = LLM.get('temperature', 0.3)
 LLM_MAX_TOKENS = LLM.get('max_tokens', 4096)
 LLM_MAX_ITER = LLM.get('max_iterations', 10)
 
+# 上下文管理（自动总结节约 token）
+CTX_MGR = config.get('context_management', {})
+CTX_SUMMARY_ENABLED = CTX_MGR.get('enabled', True)
+CTX_MAX_CHARS = CTX_MGR.get('max_context_chars', 8000)    # 超过此字数触发总结
+CTX_KEEP_RECENT = CTX_MGR.get('keep_recent_messages', 6)  # 保留最近的 N 条消息
+CTX_SUMMARY_MODEL = CTX_MGR.get('summary_model', LLM_MODEL)  # 总结用的模型
+
 # 数据库配置
 DB_CONFIG = config.get('database', {})
 
@@ -566,6 +573,93 @@ async def get_user_impression(user_id: int, group_id: int) -> str:
 
 
 # ============================================================
+# 自动总结（上下文管理，节约 token）
+# ============================================================
+
+def _count_chars(messages: list) -> int:
+    """估算 messages 列表的总字符数"""
+    total = 0
+    for m in messages:
+        content = m.get('content', '') or ''
+        total += len(content)
+        for tc in m.get('tool_calls', []) or []:
+            if 'function' in tc:
+                total += len(tc['function'].get('arguments', '') or '')
+    return total
+
+
+async def _maybe_summarize(messages: list) -> list:
+    """
+    当上下文超过阈值时，自动总结旧消息以节省 token。
+    保留 system prompt + 最近 N 条消息，中间部分用一段总结替代。
+    """
+    if not CTX_SUMMARY_ENABLED:
+        return messages
+
+    total_chars = _count_chars(messages)
+    if total_chars < CTX_MAX_CHARS:
+        return messages
+
+    # system prompt 始终保留（index 0）
+    system_msg = messages[0]
+    # 需要总结的部分：第1条到倒数 CTX_KEEP_RECENT 条
+    keep_start = max(1, len(messages) - CTX_KEEP_RECENT)
+    to_summarize = messages[1:keep_start]
+    to_keep = messages[keep_start:]
+
+    if len(to_summarize) <= 2:
+        return messages  # 太少不值得总结
+
+    # 构建总结请求
+    summary_input = "请将以下对话历史总结为一段简洁的摘要，保留关键信息（人名、数据、结论）：\n\n"
+    for m in to_summarize:
+        role = m.get('role', '')
+        content = m.get('content', '') or ''
+        if role == 'tool':
+            summary_input += f"[工具返回]: {content[:500]}\n"
+        elif role == 'assistant':
+            tcs = m.get('tool_calls', [])
+            if tcs:
+                names = [tc['function']['name'] for tc in tcs]
+                summary_input += f"[助手调用了工具: {', '.join(names)}]\n"
+            if content:
+                summary_input += f"[助手]: {content[:300]}\n"
+        elif role == 'user':
+            summary_input += f"[用户]: {content[:300]}\n"
+
+    try:
+        summary_response = await aclient.chat.completions.create(
+            model=CTX_SUMMARY_MODEL,
+            messages=[
+                {"role": "system", "content": "你是一个对话总结助手。请用中文简洁总结。"},
+                {"role": "user", "content": summary_input},
+            ],
+            temperature=0.1,
+            max_tokens=500,
+        )
+        summary_text = summary_response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning(f"总结失败，跳过: {e}")
+        return messages  # 总结失败则不做改动，继续
+
+    # 重建消息列表
+    new_messages = [
+        system_msg,
+        {
+            "role": "system",
+            "content": f"[对话历史摘要] {summary_text}"
+        },
+        *to_keep,
+    ]
+
+    old_chars = total_chars
+    new_chars = _count_chars(new_messages)
+    logger.info(f"上下文总结: {old_chars} → {new_chars} 字符 (节省 {old_chars - new_chars})")
+
+    return new_messages
+
+
+# ============================================================
 # Agent 循环
 # ============================================================
 
@@ -597,6 +691,9 @@ async def run_agent_chat(
     ]
 
     for iteration in range(LLM_MAX_ITER):
+        # 自动总结旧消息以节约 token
+        messages = await _maybe_summarize(messages)
+
         try:
             response = await aclient.chat.completions.create(
                 model=LLM_MODEL,
