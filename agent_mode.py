@@ -309,10 +309,16 @@ async def tool_sql_query(query: str) -> str:
         return "[错误] 仅允许 SELECT 查询"
 
     dangerous = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE',
-                 'TRUNCATE', 'REPLACE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE']
+                 'TRUNCATE', 'REPLACE', 'GRANT', 'REVOKE', 'EXEC', 'EXECUTE',
+                 'INTO', 'OUTFILE', 'DUMPFILE', 'LOAD_FILE', 'LOAD DATA',
+                 'RENAME', 'CALL', 'DO', 'HANDLER', 'IMPORT', 'INSTALL']
     for word in dangerous:
         if re.search(rf'\b{word}\b', cleaned, re.IGNORECASE):
             return f"[错误] 检测到危险操作: {word}"
+
+    # 额外检查 FOR UPDATE 行锁
+    if re.search(r'\bFOR\s+UPDATE\b', cleaned, re.IGNORECASE):
+        return "[错误] 检测到危险操作: FOR UPDATE"
 
     try:
         with pymysql.connect(**DB_CONFIG) as conn:
