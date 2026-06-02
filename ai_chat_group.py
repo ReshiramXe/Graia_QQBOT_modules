@@ -29,6 +29,7 @@ from graia.broadcast.interrupt import InterruptControl
 from creart import create
 from graia.scheduler.saya import SchedulerSchema
 from graia.scheduler import timers
+from agent_mode import is_agent_mode, run_agent_chat
 
 
 def load_config():
@@ -694,12 +695,20 @@ async def voice(app: Ariadne, group: Group, member: Member, message: MessageChai
                          f"时间:{time_now}id为:") + str(
             member.id) + " 昵称为:" + member.name + "对你说：(" + user_input + ")"
 
-        response_text = await chat_with_persona(
-            user_input,
-            group_id=group.id,
-            member_id=member.id,
-            member_name=member.name
-        )
+        if is_agent_mode(group.id):
+            response_text = await run_agent_chat(
+                user_input,
+                group_id=group.id,
+                member_id=member.id,
+                member_name=member.name
+            )
+        else:
+            response_text = await chat_with_persona(
+                user_input,
+                group_id=group.id,
+                member_id=member.id,
+                member_name=member.name
+            )
         response_text = re.sub(
             r'<think>.*?</think>',
             '',

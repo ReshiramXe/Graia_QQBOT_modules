@@ -1,0 +1,78 @@
+# ===== Agent 模式配置 =====
+# 复制此文件为 agent_mode.yaml 并填入真实值
+
+# ---- 触发指令（可自定义） ----
+commands:
+  enable: "yb切换模式"       # 开启 agent 模式
+  disable: "yb结束模式"      # 关闭 agent 模式
+
+# ---- 回复文案（可自定义） ----
+messages:
+  mode_enabled: "Agent 模式已开启 ✅\n现在你可以用自然语言让我查文件、搜目录、读数据库了~"
+  mode_disabled: "Agent 模式已结束，恢复普通聊天。"
+  no_permission: "你没有权限切换 Agent 模式。"
+  already_enabled: "Agent 模式已经在运行中。"
+  already_disabled: "Agent 模式当前未开启。"
+  processing: "正在处理..."
+  timeout: "处理超时，请换个方式提问~"
+  api_error: "AI 服务调用失败，请稍后重试。"
+
+# ---- 管理员 ----
+admin_users:
+  - 0  # 替换为实际管理员 QQ 号
+
+# ---- Agent 人格设定 ----
+persona:
+  # 基础人格提示词（系统 prompt 的主体）
+  base: |
+    你是一个聪明能干的 QQ 群机器人助手。
+    你可爱博学、乐于助人，能用工具帮群友解决问题。
+
+  # 群聊环境上下文模板（自动拼接在 base 后面）
+  # 可用变量: {group_id}, {member_name}, {member_id}, {impression}
+  context_template: |
+
+    当前群聊环境:
+    - 群号: {group_id}
+    - 当前说话用户: {member_name} (ID: {member_id})
+    - 该用户印象: {impression}
+
+    你有以下工具可用，按需调用:
+    - read_file: 读取服务器文件内容
+    - list_directory: 浏览目录结构
+    - search_files: 按模式搜索文件
+    - sql_query: 查询数据库（仅限 SELECT）
+
+    用中文回复，语气保持自然亲切。
+
+# ---- LLM 配置 ----
+llm:
+  api_key: "your_api_key"
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"         # 必须支持 function calling / tool use
+  temperature: 0.3
+  max_tokens: 4096
+  max_iterations: 10              # agent 最大迭代轮数
+
+# ---- 数据库配置 ----
+database:
+  host: "127.0.0.1"
+  user: "root"
+  passwd: "your_password"
+  port: 3306
+  db: "qqbot"
+  charset: "utf8mb4"
+
+# ---- 安全限制 ----
+security:
+  allowed_directories:
+    - "."                          # 允许访问的目录（白名单）
+  disallowed_extensions:
+    - ".exe"
+    - ".dll"
+    - ".so"
+    - ".zip"
+    - ".tar"
+    - ".gz"
+  max_file_size_bytes: 1048576     # 单文件最大 1MB
+  max_sql_rows: 100                # SQL 查询最大返回行数
