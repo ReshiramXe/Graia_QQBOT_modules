@@ -317,7 +317,10 @@ async def tool_sql_query(query: str) -> str:
     try:
         with pymysql.connect(**DB_CONFIG) as conn:
             with conn.cursor() as cursor:
-                cursor.execute(cleaned + " LIMIT " + str(MAX_SQL_ROWS))
+                # 如果原 SQL 已有 LIMIT 则不重复追加
+                final_sql = cleaned if re.search(r'\bLIMIT\b', cleaned, re.IGNORECASE) \
+                            else cleaned + " LIMIT " + str(MAX_SQL_ROWS)
+                cursor.execute(final_sql)
                 rows = cursor.fetchall()
                 cols = [d[0] for d in cursor.description] if cursor.description else []
     except pymysql.MySQLError as e:
