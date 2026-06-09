@@ -30,6 +30,7 @@ from creart import create
 from graia.scheduler.saya import SchedulerSchema
 from graia.scheduler import timers
 from modules.agent_mode import is_agent_mode, run_agent_chat
+from modules.shared_memory import get_history, append_history, clear_history
 
 def load_config():
     """加载配置文件"""
@@ -40,7 +41,6 @@ def load_config():
 
 channel = Channel.current()
 saya = Saya.current()
-chat_histories = {}
 cooldown_records = {}
 model_settings = {}
 inc = create(InterruptControl)
@@ -332,8 +332,7 @@ async def query_my_impression(app: Ariadne, group: Group, member: Member):
 
 # 清除记忆
 def reset_memory(group_id):
-    if group_id in chat_histories:
-        del chat_histories[group_id]
+    clear_history(group_id)
 
 
 async def get_group_cooldown(group_id):
@@ -474,7 +473,7 @@ async def chat_with_persona(user_input, group_id=None, member_id=None, member_na
     # 修改系统提示，加入用户印象
     modified_prompt = f"{ai_prompt_content}\n\n当前用户印象: {current_impression}(请根据印象分数来决定回复的语气的态度)"
 
-    history = chat_histories.get(group_id, [])
+    history = get_history(group_id)
     messages = [
         {"role": "system", "content": modified_prompt},  # 使用修改后的提示
         *history[-20:],
@@ -508,12 +507,9 @@ async def chat_with_persona(user_input, group_id=None, member_id=None, member_na
         print(f"API调用错误: {e}")
         bot_response = f"抱歉，请稍后再试qwq\n{str(e)}"
 
-    # 更新聊天历史
-    history.extend([
-        {"role": "user", "content": user_input},
-        {"role": "assistant", "content": bot_response}
-    ])
-    chat_histories[group_id] = history[-20:]  # 只保留最近10条消息
+    # 更新聊天历史 - 写入共享记忆
+    append_history(group_id, "user", user_input, name=member_name)
+    append_history(group_id, "assistant", bot_response, name="机叶")
 
     # 更新用户印象
     if member_id:

@@ -27,6 +27,7 @@ from graia.saya import Channel
 from graia.saya.builtins.broadcast import ListenerSchema
 from graia.ariadne.message.parser.base import DetectPrefix
 from modules.config_loader import get_db_config, get_api_keys, _env
+from modules.shared_memory import get_history, append_history
 
 channel = Channel.current()
 logger = logging.getLogger(__name__)
@@ -908,8 +909,12 @@ async def run_agent_chat(
         impression=impression,
     )
 
+    # 加载共享记忆中的最近对话
+    history = get_history(group_id)
+
     messages = [
         {"role": "system", "content": system_prompt},
+        *history[-20:],
         {"role": "user", "content": user_input},
     ]
 
@@ -935,6 +940,8 @@ async def run_agent_chat(
 
         # 无 tool_calls → 最终回复
         if msg.content and not msg.tool_calls:
+            append_history(group_id, "user", user_input, name=member_name)
+            append_history(group_id, "assistant", msg.content, name="机叶")
             return msg.content, _get_pending_images()
 
         # 有 tool_calls → 执行并反馈

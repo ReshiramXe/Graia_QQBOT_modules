@@ -18,8 +18,9 @@ from graia.ariadne.model import Group, Member
 from graia.saya import Channel
 from graia.saya.builtins.broadcast import ListenerSchema
 
+from modules.shared_memory import get_history, append_history
+
 channel = Channel.current()
-message_storage = defaultdict(list)
 last_response_time = defaultdict(float)
 
 
@@ -85,19 +86,20 @@ async def handle_message(app: Ariadne, group: Group, message: MessageChain, memb
     if not is_valid_message(message):
         return
 
-    # 格式化消息并存储
+    # 格式化消息并写入共享记忆
     current_time = time.strftime("%H:%M")
     formatted_message = f"({current_time}){member.name}: {message.display}"
-    message_storage[group.id].append(formatted_message)
+    append_history(group.id, "user", formatted_message, name=member.name)
 
-    # 限制消息存储数量
-    if len(message_storage[group.id]) > MESSAGE_LIMIT:
-        message_storage[group.id] = message_storage[group.id][-MESSAGE_LIMIT:]
+    # 获取共享记忆中的近期用户消息
+    history = get_history(group.id)
+    user_messages = [m["content"] for m in history if m["role"] == "user"]
+    recent_messages = user_messages[-MESSAGE_LIMIT:]
 
     # 当消息数量达到阈值时判断是否触发回复
-    if len(message_storage[group.id]) >= MESSAGE_LIMIT:
+    if len(recent_messages) >= MESSAGE_LIMIT:
         if should_trigger(group.id):
-            combined_message = "\n".join(message_storage[group.id])
+            combined_message = "\n".join(recent_messages)
             print(f"群 {group.id} 触发自主回复")
             print(combined_message)
 
@@ -119,16 +121,9 @@ async def handle_message(app: Ariadne, group: Group, message: MessageChain, memb
                     await app.send_message(group, MessageChain(ai_response))
                     # 更新最后回复时间
                     last_response_time[group.id] = time.time()
-                    # 记录 bot 自己的回复
-                    current_time = time.strftime("%H:%M")
-                    bot_message = f"({current_time})机叶: {ai_response}"
-                    message_storage[group.id].append(bot_message)
-                    # 限制消息存储数量
-                    if len(message_storage[group.id]) > MESSAGE_LIMIT:
-                        message_storage[group.id] = message_storage[group.id][-MESSAGE_LIMIT:]
+                    # 记录 bot 自己的回复到共享记忆
+                    bot_time = time.strftime("%H:%M")
+                    bot_message = f"({bot_time})机叶: {ai_response}"
+                    append_history(group.id, "assistant", bot_message, name="机叶")
             except Exception as e:
                 print(f"调用OpenAI API时发生错误: {e}")
-            finally:
-                # 只在达到消息限制时清理部分消息，保留最近的
-                if len(message_storage[group.id]) >= MESSAGE_LIMIT:
-                    message_storage[group.id] = message_storage[group.id][-int(MESSAGE_LIMIT / 2):]
