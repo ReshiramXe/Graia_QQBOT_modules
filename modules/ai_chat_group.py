@@ -45,8 +45,6 @@ cooldown_records = {}
 model_settings = {}
 inc = create(InterruptControl)
 message_counters = defaultdict(lambda: defaultdict(int))
-daily_token_usage = defaultdict(int)
-chat_tokenizer_dir = "./"
 INPUT_PATTERN = r"^\s*([^+]+?)\s*\+\s*'(.*?)'\s*\+\s*([01](\.\d+)?|2(\.0+)?)\s*$"
 
 config = load_config()
@@ -61,19 +59,6 @@ PRIVILEGED_USER_IDS = set(config.get('privileged_user_ids', []))
 DEEPSEEK_GROUPS = set(config.get('deepseek_groups', []))
 SPECIAL_COOLDOWN_USERS = config.get('special_cooldown_users', {})
 VOICE_FILE_PATH = config.get('voice_file', 'data/voices/default.mp3')
-
-# 使用 tiktoken 作为 tokenizer（轻量，~3MB，替代 transformers ~150MB）
-try:
-    import tiktoken
-    tokenizer = tiktoken.get_encoding("cl100k_base")
-except ImportError:
-    print("tiktoken 未安装，使用字符估算")
-
-    class SimpleTokenizer:
-        def encode(self, text):
-            return list(text)
-
-    tokenizer = SimpleTokenizer()
 
 # 客户端配置 — 延迟创建 AsyncOpenAI 实例，首次使用时才初始化（省 ~30MB）
 _client_cfgs = {
@@ -360,53 +345,6 @@ async def set_group_cooldown(group_id, cooldown_time):
 
 # === 印象系统结束 ===
 
-# === token 系统开始 ===
-def calculate_token_count(text):
-    if not text:
-        return 0
-    result = tokenizer.encode(text)
-    print(result)
-    return len(result)
-
-
-def get_user_key(group_id, member_id):
-    return f"{group_id}_{member_id}"
-
-
-async def update_daily_token_usage(group_id, member_id, user_input, bot_response):
-    if not member_id:  # 如果没有用户ID，无法跟踪
-        return
-
-    # 计算输入和输出的token总数
-    input_tokens = calculate_token_count(user_input)
-    output_tokens = calculate_token_count(bot_response)
-    total_tokens = input_tokens + output_tokens
-
-    # 更新token使用量
-    user_key = get_user_key(group_id, member_id)
-    daily_token_usage[user_key] += total_tokens
-
-    print(
-        f"用户 {member_id} 在群 {group_id} 消耗了 {total_tokens} tokens (输入: {input_tokens}, 输出: {output_tokens})")
-
-
-def get_daily_token_usage(group_id, member_id):
-    user_key = get_user_key(group_id, member_id)
-    return daily_token_usage.get(user_key, 0)
-
-
-def get_all_daily_usage():
-    return dict(daily_token_usage)
-
-
-def reset_daily_usage():
-    """重置当日token使用计数（通常在每日5点重启时自动完成）"""
-    daily_token_usage.clear()
-    print("每日token使用计数已重置")
-
-
-# === token 系统结束 ===
-
 
 async def chat_with_persona(user_input, group_id=None, member_id=None, member_name=None):
     proxies = PROXY_CONFIG if PROXY_CONFIG else None
@@ -469,9 +407,6 @@ async def chat_with_persona(user_input, group_id=None, member_id=None, member_na
         )
         bot_response = response.choices[0].message.content
 
-        # 更新token使用量
-        await update_daily_token_usage(group_id, member_id, user_input, bot_response)
-
     except Exception as e:
         print(f"API调用错误: {e}")
         bot_response = f"抱歉，请稍后再试qwq\n{str(e)}"
@@ -499,124 +434,6 @@ async def chat_with_persona(user_input, group_id=None, member_id=None, member_na
             print(f"更新用户印象失败: {e}")
 
     return bot_response
-
-
-@channel.use(
-    ListenerSchema(
-        listening_events=[GroupMessage],
-        decorators=[DetectPrefix("yb查询token")]
-    )
-)
-async def query_my_token(app: Ariadne, group: Group, member: Member):
-    try:
-        usage = get_daily_token_usage(group.id, member.id)
-        response = f"今日消耗的token数:\n{usage}"
-        message = MessageChain(response)
-        await app.send_message(group, message)
-    except Exception as e:
-        await app.send_message(
-            group,
-            MessageChain(f"查询token失败: {str(e)}"))
-
-
-@channel.use(
-    ListenerSchema(
-        listening_events=[GroupMessage],
-        decorators=[DetectPrefix("yb查询全群token")]
-    )
-)
-async def query_all_token(app: Ariadne, group: Group, member: Member):
-    """管理员查询所有用户token使用情况"""
-    if member.id not in ALLOWED_USERS:
-        return await app.send_message(group, MessageChain("只有授权用户可查询哦～"))
-
-    try:
-        all_usage = get_all_daily_usage()
-        if not all_usage:
-            return await app.send_message(group, MessageChain("今日尚无"))
-
-        response = "今日使用情况:\n"
-        for user_key, count in all_usage.items():
-            parts = user_key.split('_')
-            if len(parts) == 2:
-                response += f" {parts[1]} 在某群用了: {count} tokens\n"
-
-        await app.send_message(group, MessageChain(response))
-    except Exception as e:
-        await app.send_message(group, MessageChain(f"查询token失败: {str(e)}"))
-
-
-# """处理token查询命令"""
-# if command == "!token":
-#     usage = get_daily_token_usage(group_id, member_id)
-#     return f"您今日已消耗 {usage} tokens"
-#
-# elif command == "!tokenall" and is_admin(member_id):  # 假设有is_admin函数检查管理员权限
-#     all_usage = get_all_daily_usage()
-#     if not all_usage:
-#         return "今日尚无token使用记录"
-#
-#     response = "今日token使用情况:\n"
-#     for user_key, count in all_usage.items():
-#         # 解析user_key为group_id和member_id
-#         parts = user_key.split('_')
-#         if len(parts) == 2:
-#             response += f"用户 {parts[1]} (群 {parts[0]}): {count} tokens\n"
-#
-#     return response
-#
-# return None
-
-@channel.use(
-    ListenerSchema(
-        listening_events=[GroupMessage],
-        decorators=[DetectPrefix("yb查询好感排行")]
-    )
-)
-async def query_group_token_ranking(app: Ariadne, group: Group, member: Member):
-    try:
-        all_usage = get_all_daily_usage()
-        if not all_usage:
-            return await app.send_message(group, MessageChain("本群今日尚无好感度变更"))
-
-        # 筛选当前群组的token使用数据
-        group_usage = {}
-        for user_key, count in all_usage.items():
-            parts = user_key.split('_')
-            if len(parts) == 2 and int(parts[0]) == group.id:
-                user_id = int(parts[1])
-                group_usage[user_id] = count
-
-        if not group_usage:
-            return await app.send_message(group, MessageChain("本群今日尚无好感度变更"))
-
-        sorted_usage = sorted(group_usage.items(), key=lambda x: x[1], reverse=True)
-
-        # 获取用户昵称
-        response = "今日好感度排行:\n"
-        for i, (user_id, count) in enumerate(sorted_usage[:10], 1):  # 显示前10名
-            try:
-                user_info = await app.get_member(group, user_id)
-                user_name = user_info.name
-            except:
-                user_name = f"用户{user_id}"
-
-            response += f"{i}. {user_name}: {count} \n"
-
-        # 添加最高使用者的特殊提示
-        top_user_id, top_count = sorted_usage[0]
-        try:
-            top_user_info = await app.get_member(group, top_user_id)
-            top_user_name = top_user_info.name
-        except:
-            top_user_name = f"用户{top_user_id}"
-
-        response += f"\n🏆 今日最高好感度: {top_user_name} ({top_count} )"
-
-        await app.send_message(group, MessageChain(response))
-
-    except Exception as e:
-        await app.send_message(group, MessageChain(f"查询排行失败: {str(e)}"))
 
 
 @channel.use(ListenerSchema(listening_events=[GroupMessage]))
@@ -1112,8 +929,6 @@ def _cleanup_stale_data():
     # 清理不活跃的消息计数器
     for gid in list(message_counters.keys()):
         message_counters[gid] = defaultdict(int)  # 重置为空
-    # 重置每日token统计
-    reset_daily_usage()
 
 
 @channel.use(SchedulerSchema(timers.crontabify("0 23 * * *")))
