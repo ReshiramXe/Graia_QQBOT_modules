@@ -26,7 +26,7 @@ from graia.ariadne.model import Group, Member
 from graia.saya import Channel
 from graia.saya.builtins.broadcast import ListenerSchema
 from graia.ariadne.message.parser.base import DetectPrefix
-from modules.config_loader import get_db_config, get_api_keys, _env
+from modules.config_loader import get_db_config, get_api_keys, _env, get_db_connection
 from modules.shared_memory import get_history, append_history
 
 channel = Channel.current()
@@ -365,7 +365,7 @@ async def tool_sql_query(query: str) -> str:
         return "[错误] 检测到危险操作: FOR UPDATE"
 
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # 如果原 SQL 已有 LIMIT 则不重复追加
                 final_sql = cleaned if re.search(r'\bLIMIT\b', cleaned, re.IGNORECASE) \
@@ -390,7 +390,7 @@ async def tool_get_chat_history(group_id: int, count: int = 20) -> str:
     """读取指定群的最近聊天消息记录"""
     count = min(count, MAX_SQL_ROWS)
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT member_name, message_text, message_time
                          FROM group_chat_messages
@@ -417,7 +417,7 @@ async def tool_search_chat_history(group_id: int, keyword: str, count: int = 20)
     count = min(count, MAX_SQL_ROWS)
     like = f"%{keyword}%"
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT member_name, message_text, message_time
                          FROM group_chat_messages
@@ -442,7 +442,7 @@ async def tool_search_chat_history(group_id: int, keyword: str, count: int = 20)
 async def tool_get_user_impression(user_id: int, group_id: int) -> str:
     """查询指定用户的印象"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT impression
                          FROM user_impressions
@@ -783,7 +783,7 @@ TOOL_MAP = {
 
 async def get_user_impression(user_id: int, group_id: int) -> str:
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = "SELECT impression FROM user_impressions WHERE user_id = %s AND group_id = %s"
                 cursor.execute(sql, (user_id, group_id))

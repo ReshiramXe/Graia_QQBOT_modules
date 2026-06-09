@@ -31,6 +31,7 @@ from graia.scheduler.saya import SchedulerSchema
 from graia.scheduler import timers
 from modules.agent_mode import is_agent_mode, run_agent_chat
 from modules.shared_memory import get_history, append_history, clear_history, init_summarizer
+from modules.config_loader import get_db_connection
 
 def load_config():
     """加载配置文件"""
@@ -98,7 +99,7 @@ init_summarizer(_get_client("deepseek")["instance"])
 async def get_user_impression(user_id: int, group_id: int) -> str:
     """获取用户印象"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT impression
                           FROM user_impressions
@@ -113,7 +114,7 @@ async def get_user_impression(user_id: int, group_id: int) -> str:
 async def update_user_impression(user_id: int, group_id: int, new_impression: str):
     """更新用户印象"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """INSERT INTO user_impressions (user_id, group_id, impression)
                          VALUES (%s, %s, %s)
@@ -230,7 +231,7 @@ async def clear_impression(app: Ariadne, group: Group, member: Member, message: 
         return await app.send_message(group, MessageChain("只有几位可执行此操作"))
 
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = "DELETE FROM user_impressions WHERE group_id = %s"
                 cursor.execute(sql, (group.id,))
@@ -248,7 +249,7 @@ async def clear_impression(app: Ariadne, group: Group, member: Member, message: 
 )
 async def clear_impression(app: Ariadne, group: Group, member: Member, message: MessageChain):
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = "DELETE FROM user_impressions WHERE group_id = %s AND user_id = %s"
                 cursor.execute(sql, (group.id, member.id))
@@ -292,7 +293,7 @@ def reset_memory(group_id):
 async def get_group_cooldown(group_id):
     """获取群聊的冷却时间设置"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # 检查并创建group_settings表
                 create_table_sql = """
@@ -315,7 +316,7 @@ async def get_group_cooldown(group_id):
 async def set_group_cooldown(group_id, cooldown_time):
     """设置群聊的冷却时间"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 # 检查并创建group_settings表
                 create_table_sql = """
@@ -349,7 +350,7 @@ async def set_group_cooldown(group_id, cooldown_time):
 async def chat_with_persona(user_input, group_id=None, member_id=None, member_name=None):
     proxies = PROXY_CONFIG if PROXY_CONFIG else None
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT ai_model_name, ai_prompt_content, temperature, url
                         FROM ai_config
@@ -544,7 +545,7 @@ async def create_ai(app: Ariadne, group: Group, member: Member):
     temperature = 0.9
 
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """INSERT INTO ai_config
                         (qq_user_id, qq_group_name, qq_group_id, ai_model_name, ai_prompt_content, temperature)
@@ -591,7 +592,7 @@ async def update_ai_model(app: Ariadne, group: Group, member: Member):
         return await app.send_message(group, MessageChain("模型名称不能为空"))
 
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """UPDATE ai_config
                         SET ai_model_name = %s
@@ -632,7 +633,7 @@ async def update_ai_prompt(app: Ariadne, group: Group, member: Member):
 
     new_prompt = match.group(1)
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """UPDATE ai_config
                         SET ai_prompt_content = %s
@@ -652,7 +653,7 @@ async def update_ai_prompt(app: Ariadne, group: Group, member: Member):
 @channel.use(ListenerSchema(listening_events=[GroupMessage], decorators=[MatchContent("yb查询ai")]))
 async def query_ai_config(app: Ariadne, group: Group, member: Member):
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT ai_model_name, ai_prompt_content, temperature, url
                         FROM ai_config
@@ -722,7 +723,7 @@ async def update_ai_temp(app: Ariadne, group: Group, member: Member):
 
     # 数据库更新
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """UPDATE ai_config
                         SET temperature = %s
@@ -762,7 +763,7 @@ async def update_ai_model(app: Ariadne, group: Group, member: Member):
         return await app.send_message(group, MessageChain("不能为空"))
 
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """UPDATE ai_config
                         SET url = %s
@@ -819,7 +820,7 @@ async def query_cooldown(app: Ariadne, group: Group, member: Member):
 async def init_group_messages_table():
     """初始化群聊消息存储表"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """
                 CREATE TABLE IF NOT EXISTS group_chat_messages (
@@ -841,7 +842,7 @@ async def init_group_messages_table():
 async def record_group_message(group_id: int, member_id: int, member_name: str, message_text: str):
     """记录群聊消息到数据库"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """INSERT INTO group_chat_messages 
                          (group_id, member_id, member_name, message_text) 
@@ -855,7 +856,7 @@ async def record_group_message(group_id: int, member_id: int, member_name: str, 
 async def get_daily_chat_messages(group_id: int) -> list:
     """获取指定群今日所有聊天消息"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """SELECT member_name, message_text, message_time 
                          FROM group_chat_messages 
@@ -908,7 +909,7 @@ async def summarize_chat_with_ai(chat_messages: list, group_id: int) -> str:
 async def clear_old_messages(days: int = 7):
     """清理指定天数之前的消息"""
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = """DELETE FROM group_chat_messages 
                          WHERE message_time < DATE_SUB(NOW(), INTERVAL %s DAY)"""
@@ -938,7 +939,7 @@ async def daily_group_summary(app: Ariadne):
     await init_group_messages_table()
 
     try:
-        with pymysql.connect(**DB_CONFIG) as conn:
+        with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 sql = "SELECT DISTINCT group_id FROM group_chat_messages WHERE DATE(message_time) = CURDATE()"
                 cursor.execute(sql)

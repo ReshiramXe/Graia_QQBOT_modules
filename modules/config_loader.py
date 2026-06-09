@@ -5,8 +5,43 @@
 
 import os
 import yaml
+import pymysql
 from pathlib import Path
 from functools import lru_cache
+from dbutils.pooled_db import PooledDB
+
+# 数据库连接池（全局单例，复用连接减少 MySQL 内存开销）
+_pool = None
+
+
+def _init_pool():
+    """初始化数据库连接池（首次调用时创建）"""
+    global _pool
+    if _pool is None:
+        cfg = get_db_config()
+        _pool = PooledDB(
+            creator=pymysql,
+            maxconnections=8,      # 最多8个连接
+            mincached=1,           # 最少保持1个空闲连接
+            maxcached=4,           # 最多缓存4个
+            maxshared=0,           # 不共享连接
+            blocking=True,         # 连接耗尽时等待
+            maxusage=100,          # 单个连接最多复用100次
+            setsession=[],
+            ping=0,                # 0=不ping, 1=默认, 2=每次用前ping, 4=每次用完ping, 7=总是ping
+            host=cfg['host'],
+            user=cfg['user'],
+            password=cfg['passwd'],
+            port=cfg['port'],
+            database=cfg['db'],
+            charset=cfg['charset'],
+        )
+    return _pool
+
+
+def get_db_connection():
+    """获取数据库连接（从连接池借用，用完 close() 即归还）"""
+    return _init_pool().connection()
 
 
 def get_config_dir():
