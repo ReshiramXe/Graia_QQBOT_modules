@@ -1,0 +1,62 @@
+# ===== 敏感信息 =====
+*.env
+.env.*
+config.json
+*.key
+*.pem
+*.cert
+token.txt
+*.token
+*.yaml
+
+# ===== Python缓存文件 =====
+__pycache__/
+*.py[cod]
+*.so
+.Python
+**/__pycache__/
+
+# ===== VSCode/IDE配置 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+*.log
+
+# ===== node依赖（如果有） =====
+node_modules/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
+
+# ===== 大文件 =====
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.mp4
+*.mov
+*.iso
+
+# ===== 数据库文件 =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== 日志文件 =====
+logs/
+*.log
+
+# ===== 图片文件 =====
+tarot_cards/
+*.png
+temp_img/
+images/
+
+
