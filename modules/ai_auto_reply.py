@@ -89,7 +89,7 @@ async def handle_message(app: Ariadne, group: Group, message: MessageChain, memb
     # 格式化消息并写入共享记忆
     current_time = time.strftime("%H:%M")
     formatted_message = f"({current_time}){member.name}: {message.display}"
-    append_history(group.id, "user", formatted_message, name=member.name)
+    await append_history(group.id, "user", formatted_message, name=member.name)
 
     # 获取共享记忆中的近期用户消息
     history = get_history(group.id)
@@ -124,6 +124,6 @@ async def handle_message(app: Ariadne, group: Group, message: MessageChain, memb
                     # 记录 bot 自己的回复到共享记忆
                     bot_time = time.strftime("%H:%M")
                     bot_message = f"({bot_time})机叶: {ai_response}"
-                    append_history(group.id, "assistant", bot_message, name="机叶")
+                    await append_history(group.id, "assistant", bot_message, name="机叶")
             except Exception as e:
                 print(f"调用OpenAI API时发生错误: {e}")

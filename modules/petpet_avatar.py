@@ -5,8 +5,6 @@ from pathlib import Path
 import re
 import requests
 import math
-import cv2
-import numpy as np
 from PIL import Image as PILImage, ImageDraw
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import GroupMessage
@@ -20,6 +18,9 @@ channel = Channel.current()
 
 
 def overlay_gif_on_image(image_path, output_path):
+    import cv2            # 懒加载，仅在生成摸摸图时导入（省 ~150MB）
+    import numpy as np
+
     gif_path = '/home/botin/hand_image/petpet/template.gif'
 
     image = cv2.imread(image_path)

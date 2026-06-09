@@ -940,8 +940,8 @@ async def run_agent_chat(
 
         # 无 tool_calls → 最终回复
         if msg.content and not msg.tool_calls:
-            append_history(group_id, "user", user_input, name=member_name)
-            append_history(group_id, "assistant", msg.content, name="机叶")
+            await append_history(group_id, "user", user_input, name=member_name)
+            await append_history(group_id, "assistant", msg.content, name="机叶")
             return msg.content, _get_pending_images()
 
         # 有 tool_calls → 执行并反馈

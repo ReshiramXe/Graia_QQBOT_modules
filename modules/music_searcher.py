@@ -2,13 +2,7 @@
 
 
 import os
-import os
 import yaml
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 import requests
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import GroupMessage
@@ -18,8 +12,6 @@ from graia.ariadne.model import Group
 from graia.saya import Channel
 from graia.saya.builtins.broadcast.schema import ListenerSchema
 from graia.ariadne.message.parser.base import MatchContent
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from pathlib import Path
 import graiax.silkcoder as silkcoder
 from graia.broadcast.interrupt import InterruptControl

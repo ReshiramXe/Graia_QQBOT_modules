@@ -2,7 +2,7 @@
 import json
 import yaml
 from collections import defaultdict
-import transformers
+# import transformers  # 已移除，节省 ~150MB 内存，改用 tiktoken
 from openai import OpenAI
 from pathlib import Path
 import asyncio
@@ -30,7 +30,7 @@ from creart import create
 from graia.scheduler.saya import SchedulerSchema
 from graia.scheduler import timers
 from modules.agent_mode import is_agent_mode, run_agent_chat
-from modules.shared_memory import get_history, append_history, clear_history
+from modules.shared_memory import get_history, append_history, clear_history, init_summarizer
 
 def load_config():
     """加载配置文件"""
@@ -62,81 +62,50 @@ DEEPSEEK_GROUPS = set(config.get('deepseek_groups', []))
 SPECIAL_COOLDOWN_USERS = config.get('special_cooldown_users', {})
 VOICE_FILE_PATH = config.get('voice_file', 'data/voices/default.mp3')
 
+# 使用 tiktoken 作为 tokenizer（轻量，~3MB，替代 transformers ~150MB）
 try:
-    from transformers import AutoTokenizer
+    import tiktoken
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+except ImportError:
+    print("tiktoken 未安装，使用字符估算")
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        chat_tokenizer_dir,
-        trust_remote_code=True,
-        local_files_only=True
-    )
+    class SimpleTokenizer:
+        def encode(self, text):
+            return list(text)
 
-    # 确保tokenizer有正确的encode方法
-    if not hasattr(tokenizer, 'encode'):
-        raise Exception("Tokenizer does not have encode method")
+    tokenizer = SimpleTokenizer()
 
-except Exception as e:
-    print(f"Tokenizer初始化失败: {e}")
-
-    # 使用tiktoken作为备选方案（需要安装：pip install tiktoken）
-    try:
-        import tiktoken
-
-        tokenizer = tiktoken.get_encoding("cl100k_base")  # 使用OpenAI的编码
-        print("使用tiktoken作为备选tokenizer")
-    except ImportError:
-        print("tiktoken未安装，使用简单字符计数")
-
-
-        # 更准确的备选方案：字符数除以4（近似token估算）
-        class SimpleTokenizer:
-            def encode(self, text):
-                # 返回字符列表作为近似
-                return list(text)
-
-
-        tokenizer = SimpleTokenizer()
-
-clients = {
-    "siliconflow": {
-        "instance": AsyncOpenAI(
-            api_key=config['api_keys']['siliconflow'],
-            base_url="https://api.siliconflow.cn/v1"
-        )
-    },
-    "deepseek": {
-        "instance": AsyncOpenAI(
-            api_key=config['api_keys']['deepseek'],
-            base_url="https://api.deepseek.com/v1"
-        )
-    },
-    "xiaoai": {
-        "instance": AsyncOpenAI(
-            api_key=config['api_keys']['xiaoai'],
-            base_url="https://xiaoai.plus/v1"
-        )
-    },
-    "xi-ai": {
-        "instance": AsyncOpenAI(
-            api_key=config['api_keys']['xi-ai'],
-            base_url="https://api.xi-ai.cn/v1/"
-        )
-    },
-    "xai": {
-        "instance": AsyncOpenAI(
-            api_key=config['api_keys']['xai'],
-            base_url="https://api.x.ai/v1"
-        )
-    },
-    "Kimi": {
-        "instance": AsyncOpenAI(
-            api_key=config['api_keys']['Kimi'],
-            base_url="https://api.moonshot.cn/v1"
-        )
-    },
+# 客户端配置 — 延迟创建 AsyncOpenAI 实例，首次使用时才初始化（省 ~30MB）
+_client_cfgs = {
+    "siliconflow":  ("sk-placeholder", "https://api.siliconflow.cn/v1"),
+    "deepseek":     ("sk-placeholder", "https://api.deepseek.com/v1"),
+    "xiaoai":       ("sk-placeholder", "https://xiaoai.plus/v1"),
+    "xi-ai":        ("sk-placeholder", "https://api.xi-ai.cn/v1/"),
+    "xai":          ("sk-placeholder", "https://api.x.ai/v1"),
+    "Kimi":         ("sk-placeholder", "https://api.moonshot.cn/v1"),
 }
+# 用实际 API key 覆盖
+for name, (_, url) in _client_cfgs.items():
+    key = config['api_keys'].get(name)
+    if key:
+        _client_cfgs[name] = (key, url)
+
+clients = {}  # 延迟填充，首次访问时才 new AsyncOpenAI
+
+def _get_client(name: str) -> dict:
+    """延迟创建客户端，首次访问初始化"""
+    if name not in clients:
+        if name in _client_cfgs:
+            key, url = _client_cfgs[name]
+            clients[name] = {"instance": AsyncOpenAI(api_key=key, base_url=url)}
+        else:
+            raise KeyError(f"未知客户端: {name}")
+    return clients[name]
 
 ai_prompt_content_0 = config['ai_prompt01']
+
+# 初始化 shared_memory 的自动总结器（复用 deepseek 客户端）
+init_summarizer(_get_client("deepseek")["instance"])
 
 
 # === 印象系统开始 ===
@@ -173,7 +142,7 @@ async def update_user_impression(user_id: int, group_id: int, new_impression: st
 async def generate_impression_update(current_impression: str, conversation: list) -> str:
     """生成新的用户印象"""
     try:
-        client = clients["deepseek"]["instance"]
+        client = _get_client("deepseek")["instance"]
         messages = [
             {
                 "role": "system",
@@ -200,7 +169,7 @@ async def generate_impression_update(current_impression: str, conversation: list
 async def reverse_impression_text(impression_text: str) -> str:
     """使用AI API反转印象文本和分数"""
     try:
-        client = clients["deepseek"]["instance"]
+        client = _get_client("deepseek")["instance"]
         messages = [
             {
                 "role": "system",
@@ -508,8 +477,8 @@ async def chat_with_persona(user_input, group_id=None, member_id=None, member_na
         bot_response = f"抱歉，请稍后再试qwq\n{str(e)}"
 
     # 更新聊天历史 - 写入共享记忆
-    append_history(group_id, "user", user_input, name=member_name)
-    append_history(group_id, "assistant", bot_response, name="机叶")
+    await append_history(group_id, "user", user_input, name=member_name)
+    await append_history(group_id, "assistant", bot_response, name="机叶")
 
     # 更新用户印象
     if member_id:
@@ -1090,7 +1059,7 @@ async def summarize_chat_with_ai(chat_messages: list, group_id: int) -> str:
         return "今日群聊暂无消息~"
 
     try:
-        client = clients["deepseek"]["instance"]
+        client = _get_client("deepseek")["instance"]
 
         chat_text = "\n".join([f"[{time.strftime('%H:%M')}] {name}: {msg}"
                                for name, msg, time in chat_messages])
@@ -1133,9 +1102,24 @@ async def clear_old_messages(days: int = 7):
         print(f"清理旧消息失败: {e}")
 
 
+def _cleanup_stale_data():
+    """清理过期数据，防止内存泄漏"""
+    now = time.time()
+    # 清理超过1小时未活动的冷却记录
+    stale = [uid for uid, t in cooldown_records.items() if now - t > 3600]
+    for uid in stale:
+        del cooldown_records[uid]
+    # 清理不活跃的消息计数器
+    for gid in list(message_counters.keys()):
+        message_counters[gid] = defaultdict(int)  # 重置为空
+    # 重置每日token统计
+    reset_daily_usage()
+
+
 @channel.use(SchedulerSchema(timers.crontabify("0 23 * * *")))
 async def daily_group_summary(app: Ariadne):
-    """每日定时总结所有开启总结功能的群聊"""
+    """每日定时总结 + 内存清理"""
+    _cleanup_stale_data()
     await init_group_messages_table()
 
     try:
