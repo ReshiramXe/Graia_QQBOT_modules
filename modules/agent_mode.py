@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from openai import AsyncOpenAI
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import GroupMessage
 from graia.ariadne.message.chain import MessageChain
