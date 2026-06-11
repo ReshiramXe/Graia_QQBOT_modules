@@ -1,5 +1,12 @@
 # Graia QQBot Modules
 
+## Recent Update
+
+- Tarot now supports multiple image versions per card.
+- Repeated draws rotate through different uploaded versions when available.
+- Reservation-related tarot logic has been removed.
+- Secrets and deployment credentials should stay outside this repository.
+
 基于 [Graia Ariadne](https://github.com/GraiaProject/Ariadne) 框架的多功能 QQ 机器人模块集合，支持 AI 对话、塔罗牌占卜、音乐搜索、定时提醒等丰富功能。
 
 ## ✨ 功能模块与触发指令

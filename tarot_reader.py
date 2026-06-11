@@ -1,26 +1,25 @@
-import os
 import asyncio
 import random
-import json
+import re
 import time
-import yaml
-import requests
 from pathlib import Path
-from PIL import Image
+from urllib.parse import quote
+
+import requests
+import yaml
 from openai import AsyncOpenAI
+from PIL import Image
 from graia.ariadne.app import Ariadne
 from graia.ariadne.event.message import GroupMessage
 from graia.ariadne.message.chain import MessageChain
-from graia.ariadne.message.element import Plain, Image as GraiaImage, Source, Forward, ForwardNode
-from graia.ariadne.message.parser.twilight import Twilight, FullMatch, ElementMatch, ElementResult, RegexMatch, \
-    WildcardMatch
+from graia.ariadne.message.element import Forward, ForwardNode, Image as GraiaImage, Plain, Source
+from graia.ariadne.message.parser.twilight import ElementMatch, FullMatch, Twilight, WildcardMatch
 from graia.ariadne.model import Group, Member
 from graia.saya import Channel
 from graia.saya.builtins.broadcast.schema import ListenerSchema
 
 channel = Channel.current()
 
-# 塔罗牌列表
 tarot_cards = [
     "愚者", "魔术师", "女祭司", "女皇", "皇帝", "教皇", "恋人", "战车",
     "力量", "隐士", "命运之轮", "正义", "倒吊人", "死神", "节制", "魔鬼",
@@ -28,129 +27,208 @@ tarot_cards = [
 ]
 
 
-# 加载配置
 def load_config():
     """加载配置文件"""
-    config_path = Path(__file__).parent / 'config' / 'tarot.yaml'
+    config_path = Path(__file__).parent / "config" / "tarot.yaml"
     if not config_path.exists():
         default_config = {
             "api": {
                 "api_key": "your_api_key",
                 "base_url": "https://api.deepseek.com/v1",
-                "model": "deepseek-chat"
+                "model": "deepseek-chat",
             },
             "temperature": 1.2,
             "allowed_groups": [],
-            "card_authors": {}
+            "card_authors": {},
+            "draw_history": {},
+            "image_server_url": "http://baibai.pinkcandy.top:80",
         }
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_path, 'w', encoding='utf-8') as f:
+        with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(default_config, f, allow_unicode=True, default_flow_style=False)
         return default_config
 
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f) or {}
 
-    if "card_authors" not in config:
-        config["card_authors"] = {}
-
+    config.setdefault("card_authors", {})
+    config.setdefault("draw_history", {})
+    config.setdefault("image_server_url", "http://8.134.132.129:80")
+    config.pop("reservations", None)
     return config
 
 
-# 保存配置
-def save_config(config):
-    """保存配置文件"""
-    config_path = Path(__file__).parent / 'config' / 'tarot.yaml'
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, 'w', encoding='utf-8') as f:
-        yaml.dump(config, f, allow_unicode=True, default_flow_style=False)
+async def save_config(config):
+    """异步保存配置文件"""
+
+    def _save():
+        config_path = Path(__file__).parent / "config" / "tarot.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_to_save = dict(config)
+        config_to_save.pop("reservations", None)
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(config_to_save, f, allow_unicode=True, default_flow_style=False)
+
+    await asyncio.to_thread(_save)
 
 
-# 加载配置
 config = load_config()
 
-# 初始化OpenAI客户端 - 从YAML配置加载
 client = AsyncOpenAI(
     api_key=config["api"]["api_key"],
-    base_url=config["api"]["base_url"]
+    base_url=config["api"]["base_url"],
 )
 
-# 配置参数
-TEMPERATURE = config['temperature']
-ALLOWED_GROUPS = config['allowed_groups']
+TEMPERATURE = config["temperature"]
+ALLOWED_GROUPS = config["allowed_groups"]
 
-# Tarot card image handling
 TAROT_IMAGE_DIR = Path("modules/tarot_cards")
 TAROT_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR = Path("modules/temp_img")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# 列表分页与缩略图配置 - 针对2GB内存服务器优化
-PAGE_SIZE = 6  # 每页显示卡牌数量
-THUMBNAIL_MAX_SIZE = (200, 300)  # 缩略图最大尺寸 (宽, 高)，大幅减少内存占用
+CARD_VERSION_PATTERN = re.compile(r"^(?P<base>.+?)(?P<version>\d+)$")
 
 
-def get_card_image_path(card_name: str) -> Path:
-    return TAROT_IMAGE_DIR / f"{card_name}.png"
+def parse_card_version(versioned_name: str):
+    match = CARD_VERSION_PATTERN.fullmatch(versioned_name)
+    if not match:
+        return None, None
+    return match.group("base"), int(match.group("version"))
 
 
-def create_reversed_card(card_name: str) -> str:
-    card_path = get_card_image_path(card_name)
-    if card_path.exists():
-        original_image = Image.open(card_path)
-        reversed_image = original_image.rotate(180)
-        output_path = OUTPUT_DIR / f"{card_name}_逆位.png"
-        reversed_image.save(output_path)
-        # 显式关闭图片对象，释放内存
-        original_image.close()
-        reversed_image.close()
-        return str(output_path)
-    return None
+def normalize_versioned_card_name(card_name: str) -> str:
+    card_name = card_name.strip()
+    if not card_name:
+        return card_name
+    base_name, version = parse_card_version(card_name)
+    if base_name in tarot_cards and version is not None:
+        return f"{base_name}{version}"
+    if card_name in tarot_cards:
+        return f"{card_name}1"
+    return card_name
 
 
-def compress_image_for_list(image_path: Path) -> Path:
-    """将图片压缩为缩略图，用于列表视图以大幅减少内存占用。
-
-    在2GB内存服务器上，原始PNG解码后可能占用50-100MB/张，
-    压缩到200x300像素后仅需约0.2MB/张，22张总计仅需约5MB。
-    使用缓存机制避免重复压缩。
-    """
-    compressed_path = OUTPUT_DIR / f"thumb_{image_path.stem}.png"
-
-    # 如果缩略图已存在且比源文件新，直接使用缓存
-    if compressed_path.exists():
-        if image_path.stat().st_mtime <= compressed_path.stat().st_mtime:
-            return compressed_path
-
-    try:
-        img = Image.open(image_path)
-        # 统一转换模式，避免保存时的兼容性问题
-        if img.mode in ('RGBA', 'LA', 'P'):
-            img = img.convert('RGBA')
-        else:
-            img = img.convert('RGB')
-        # 缩略图：保持宽高比，限制在 THUMBNAIL_MAX_SIZE 内
-        img.thumbnail(THUMBNAIL_MAX_SIZE, Image.LANCZOS)
-        img.save(compressed_path, 'PNG', optimize=True)
-        # 显式关闭图片对象，释放内存
-        img.close()
-        return compressed_path
-    except Exception:
-        # 压缩失败时回退到原图（但这种情况很少见）
-        return image_path
+def get_card_image_path(versioned_card_name: str) -> Path:
+    return TAROT_IMAGE_DIR / f"{versioned_card_name}.png"
 
 
-def get_card_image(card_name: str, is_reversed: bool = False) -> str:
-    card_path = get_card_image_path(card_name)
-    if card_path.exists():
-        if is_reversed:
-            return create_reversed_card(card_name)
-        return str(card_path)
-    return None
+def list_card_versions(card_name: str):
+    versions = []
+    for path in TAROT_IMAGE_DIR.glob(f"{card_name}*.png"):
+        versioned_name = path.stem
+        base_name, version = parse_card_version(versioned_name)
+        if base_name == card_name and version is not None:
+            versions.append((version, versioned_name, path))
+    versions.sort(key=lambda item: item[0])
+    return versions
 
 
-def is_card_image_available(card_name: str) -> bool:
-    return get_card_image_path(card_name).exists()
+def has_any_card_image(card_name: str) -> bool:
+    return bool(list_card_versions(card_name))
+
+
+def get_next_versioned_card_name(card_name: str) -> str:
+    existing_versions = list_card_versions(card_name)
+    next_version = existing_versions[-1][0] + 1 if existing_versions else 1
+    return f"{card_name}{next_version}"
+
+
+def choose_version_for_draw(card_name: str) -> str:
+    versions = [versioned_name for _, versioned_name, _ in list_card_versions(card_name)]
+    if not versions:
+        return f"{card_name}1"
+
+    history = config.setdefault("draw_history", {}).setdefault(card_name, [])
+    used_versions = [item for item in history if item in versions]
+    available_versions = [item for item in versions if item not in used_versions]
+
+    if not available_versions:
+        history.clear()
+        available_versions = versions.copy()
+
+    selected_version = random.choice(available_versions)
+    history.append(selected_version)
+    return selected_version
+
+
+def migrate_legacy_images_and_config():
+    changed = False
+
+    for card_name in tarot_cards:
+        legacy_path = TAROT_IMAGE_DIR / f"{card_name}.png"
+        versioned_path = get_card_image_path(f"{card_name}1")
+        if legacy_path.exists() and not versioned_path.exists():
+            legacy_path.rename(versioned_path)
+            changed = True
+
+        if card_name in config.get("card_authors", {}) and f"{card_name}1" not in config["card_authors"]:
+            config["card_authors"][f"{card_name}1"] = config["card_authors"].pop(card_name)
+            changed = True
+
+    valid_history = {}
+    for card_name, history in config.get("draw_history", {}).items():
+        if card_name not in tarot_cards:
+            changed = True
+            continue
+        valid_versions = {name for _, name, _ in list_card_versions(card_name)}
+        filtered_history = [item for item in history if item in valid_versions]
+        valid_history[card_name] = filtered_history
+        if filtered_history != history:
+            changed = True
+
+    config["draw_history"] = valid_history
+    return changed
+
+
+async def compress_image(image_path: Path, max_size: int = 300) -> str:
+    """异步压缩图片到指定最大尺寸"""
+    compressed_path = OUTPUT_DIR / f"compressed_{image_path.name}"
+    if compressed_path.exists() and compressed_path.stat().st_mtime >= image_path.stat().st_mtime:
+        return str(compressed_path)
+
+    def _compress():
+        with Image.open(image_path) as img:
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGBA")
+                background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                img = background.convert("RGB")
+            else:
+                img = img.convert("RGB")
+
+            img.thumbnail((max_size, max_size), Image.LANCZOS)
+            img.save(compressed_path, "JPEG", quality=75, optimize=True)
+
+        return str(compressed_path)
+
+    return await asyncio.to_thread(_compress)
+
+
+async def create_reversed_card(versioned_card_name: str) -> str | None:
+    """异步创建逆位牌面图片"""
+    card_path = get_card_image_path(versioned_card_name)
+    if not card_path.exists():
+        return None
+
+    def _create():
+        with Image.open(card_path) as original_image:
+            reversed_image = original_image.rotate(180)
+            output_path = OUTPUT_DIR / f"{versioned_card_name}_逆位.png"
+            reversed_image.save(output_path)
+            return str(output_path)
+
+    return await asyncio.to_thread(_create)
+
+
+async def get_card_image(versioned_card_name: str, is_reversed: bool = False) -> str | None:
+    """异步获取牌面图片路径"""
+    card_path = get_card_image_path(versioned_card_name)
+    if not card_path.exists():
+        return None
+    if is_reversed:
+        return await create_reversed_card(versioned_card_name)
+    return str(card_path)
 
 
 @channel.use(ListenerSchema(listening_events=[GroupMessage]))
@@ -159,50 +237,46 @@ async def tarot_handler(app: Ariadne, group: Group, message: MessageChain):
 
     if msg_text == "yb抽塔罗牌":
         try:
-            # 随机抽取一张塔罗牌
             selected_card = random.choice(tarot_cards)
-            # 随机决定正位或逆位
+            selected_version = choose_version_for_draw(selected_card)
             position = random.choice(["正位", "逆位"])
 
-            # 调用AI来回复
             current_time_str = time.strftime("%H:%M")
             current_date_str = time.strftime("%Y-%m-%d")
 
-            # 构建AI提示
-            tarot_prompt = f"你是一只毛绒绒的叶伊布,你的名字叫机叶,在咖啡馆工作,主人叫白白,你可爱且博学多闻.\n今天是{current_date_str},现在的时间是{current_time_str}.\n用户抽到了塔罗牌 '{selected_card}' {position},请你用一句话简短描述这张塔罗牌的含义以及用户当天的运气,保持可爱的语气,不要使用颜文字,不要使用感叹号."
+            tarot_prompt = (
+                f"你是一只毛绒绒的叶伊布,你的名字叫机叶,在咖啡馆工作,主人叫白白,你可爱且博学多闻.\n"
+                f"今天是{current_date_str},现在的时间是{current_time_str}.\n"
+                f"用户抽到了塔罗牌 '{selected_card}' {position},请你用一句话简短描述这张塔罗牌的含义以及用户当天的运气,"
+                "保持可爱的语气,不要使用颜文字,不要使用感叹号."
+            )
 
             response = await client.chat.completions.create(
-                model=config['api']['model'],
+                model=config["api"]["model"],
                 messages=[
                     {"role": "system", "content": tarot_prompt},
-                    {"role": "user",
-                     "content": f"我抽到了塔罗牌 '{selected_card}' {position},请告诉我它的含义和今天的运气."}
+                    {
+                        "role": "user",
+                        "content": f"我抽到了塔罗牌 '{selected_card}' {position},请告诉我它的含义和今天的运气。",
+                    },
                 ],
                 temperature=TEMPERATURE,
-                stream=False
+                stream=False,
             )
 
             ai_response = response.choices[0].message.content.strip()
+            message_chain = [
+                Plain(f"🎋 你抽到了塔罗牌 {selected_card} {position}\n当前牌面版本: [{selected_version}] 上传者: {config.get('card_authors', {}).get(selected_version, '未知')}\n{ai_response}")
+            ]
 
-            # 准备消息内容
-            message_chain = [Plain(f"🎴 你抽到了塔罗牌: {selected_card} {position}\n{ai_response}")]
-
-            # 检查是否有牌面图片
-            card_image = get_card_image(selected_card, position == "逆位")
+            card_image = await get_card_image(selected_version, position == "逆位")
             if card_image:
                 message_chain.append(GraiaImage(path=card_image))
 
-            # 发送回复
-            await app.send_message(
-                group,
-                MessageChain(message_chain),
-            )
+            await save_config(config)
+            await app.send_message(group, MessageChain(message_chain))
         except Exception as e:
-            error_msg = f"❌ 抽塔罗牌时出错: {str(e)}"
-            await app.send_message(
-                group,
-                MessageChain([Plain(error_msg)]),
-            )
+            await app.send_message(group, MessageChain([Plain(f"❌ 抽塔罗牌时出错: {str(e)}")]))
 
 
 @channel.use(
@@ -225,170 +299,163 @@ async def tarot_add_handler(app: Ariadne, group: Group, member: Member, message:
         if not msg_text.startswith("yb添加塔罗牌图片"):
             return
 
-        # 查找第一个空格
-        space_idx = msg_text.find(" ")
-        if space_idx == -1:
+        parts = msg_text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
             await app.send_message(
                 group,
                 MessageChain("❌ 指令格式有误，请使用: yb添加塔罗牌图片 [卡牌名称] 并附带图片"),
-                quote=source.id
+                quote=source.id,
             )
             return
 
-        # 从第一个空格后获取卡牌名称
-        card_name_str = msg_text[space_idx:].strip()
-
-        # 再次查找空格，只取第一个空格前的内容
-        next_space = card_name_str.find(" ")
-        if next_space != -1:
-            card_name_str = card_name_str[:next_space].strip()
-
+        card_name_str = parts[1].strip().split()[0]
         if card_name_str not in tarot_cards:
             await app.send_message(
                 group,
                 MessageChain(f"❌ 无效的卡牌名称 '{card_name_str}'，有效卡牌: {', '.join(tarot_cards)}"),
-                quote=source.id
+                quote=source.id,
             )
             return
 
-        # 检查是否有图片
         if GraiaImage not in message:
             await app.send_message(
                 group,
                 MessageChain("❌ 请在发送指令时附带塔罗牌图片"),
-                quote=source.id
+                quote=source.id,
             )
             return
 
         image_element = message[GraiaImage][0]
+        versioned_card_name = get_next_versioned_card_name(card_name_str)
+        target_path = get_card_image_path(versioned_card_name)
 
-        # 尝试从 URL 获取图片
         try:
-            if hasattr(image_element, 'url') and image_element.url:
-                response = requests.get(image_element.url)
-                response.raise_for_status()
-                from io import BytesIO
-                img_obj = Image.open(BytesIO(response.content))
-                img_obj.save(get_card_image_path(card_name_str))
+            if hasattr(image_element, "url") and image_element.url:
 
-                # 记录作者信息
-                config["card_authors"][card_name_str] = {
-                    "user_id": member.id,
-                    "user_name": member.name or member.display
-                }
-                save_config(config)
+                async def _download_and_save_url():
+                    def _sync():
+                        response = requests.get(image_element.url, timeout=30)
+                        response.raise_for_status()
+                        from io import BytesIO
 
-                await app.send_message(
-                    group,
-                    MessageChain(
-                        f"✅ 成功添加 '{card_name_str}' 的塔罗牌图片！\n添加者: {member.name or member.display}"),
-                    quote=source.id
-                )
-                return
-        except Exception as e1:
-            print(f"URL 方式下载失败: {e1}")
+                        with Image.open(BytesIO(response.content)) as img_obj:
+                            img_obj.save(target_path)
 
-        # 尝试从 path 获取图片
-        try:
-            if hasattr(image_element, 'path') and image_element.path:
-                img_obj = Image.open(image_element.path)
-                img_obj.save(get_card_image_path(card_name_str))
+                    return await asyncio.to_thread(_sync)
 
-                # 记录作者信息
-                config["card_authors"][card_name_str] = {
-                    "user_id": member.id,
-                    "user_name": member.name or member.display
-                }
-                save_config(config)
+                await _download_and_save_url()
+            elif hasattr(image_element, "path") and image_element.path:
 
-                await app.send_message(
-                    group,
-                    MessageChain(
-                        f"✅ 成功添加 '{card_name_str}' 的塔罗牌图片！\n添加者: {member.name or member.display}"),
-                    quote=source.id
-                )
-                return
-        except Exception as e2:
-            print(f"路径方式复制失败: {e2}")
+                async def _save_from_path():
+                    def _sync():
+                        with Image.open(image_element.path) as img_obj:
+                            img_obj.save(target_path)
 
-        await app.send_message(
-            group,
-            MessageChain("❌ 图片保存失败，请重试"),
-            quote=source.id
-        )
+                    return await asyncio.to_thread(_sync)
 
+                await _save_from_path()
+            else:
+                raise ValueError("未找到可用的图片来源")
+
+            config.setdefault("card_authors", {})[versioned_card_name] = {
+                "user_id": member.id,
+                "user_name": member.name or member.display,
+                "base_card": card_name_str,
+            }
+            config.setdefault("draw_history", {}).setdefault(card_name_str, [])
+            await save_config(config)
+
+            await app.send_message(
+                group,
+                MessageChain(
+                    f"✅ 成功添加 '{versioned_card_name}' 的塔罗牌图片\n"
+                    f"原始卡牌: {card_name_str}\n"
+                    f"添加者: {member.name or member.display}"
+                ),
+                quote=source.id,
+            )
+        except Exception as image_error:
+            await app.send_message(
+                group,
+                MessageChain(f"❌ 图片保存失败，请重试: {str(image_error)}"),
+                quote=source.id,
+            )
     except Exception as e:
         await app.send_message(
             group,
             MessageChain(f"❌ 添加图片时出错: {str(e)}"),
-            quote=source.id
+            quote=source.id,
         )
 
 
 @channel.use(ListenerSchema(listening_events=[GroupMessage]))
 async def tarot_list_handler(app: Ariadne, group: Group, message: MessageChain, member: Member):
-    """塔罗牌列表处理器 - 缩略图压缩优化，适配2GB内存服务器。
-
-    原问题：22张牌的原图同时加载到ForwardNode中，
-    每张PNG解码后可达50-100MB，总计可超1GB导致OOM。
-
-    优化：所有图片使用200x300缩略图，单张仅约0.2MB，
-    22张总计约5MB，2GB服务器完全无压力。
-    """
     msg_text = message.display.strip()
 
-    if msg_text != "yb塔罗牌列表":
-        return
+    if msg_text == "yb塔罗牌列表":
+        try:
+            from datetime import datetime
 
-    try:
-        from datetime import datetime
+            fwd_node_list = [
+                ForwardNode(
+                    target=member,
+                    time=datetime.now(),
+                    message=MessageChain("🎋 塔罗牌列表"),
+                )
+            ]
 
-        fwd_node_list = [
-            ForwardNode(
-                target=member,
-                time=datetime.now(),
-                message=MessageChain("🎴 塔罗牌列表"),
-            )
-        ]
+            total_versions = 0
+            server_url = config.get("image_server_url", "").rstrip("/")
 
-        for card in tarot_cards:
-            author_info = ""
-            if card in config.get("card_authors", {}):
-                author = config["card_authors"][card]
-                author_info = f"\n添加者: {author.get('user_name', '未知')}"
+            for card in tarot_cards:
+                versions = list_card_versions(card)
+                total_versions += len(versions)
 
-            message_parts = [Plain(f"🎴 {card}{author_info}")]
+                if not versions:
+                    fwd_node_list.append(
+                        ForwardNode(
+                            target=member,
+                            time=datetime.now(),
+                            message=MessageChain(f"🎋 {card}\n当前还没有上传任何版本"),
+                        )
+                    )
+                    continue
 
-            # 使用压缩缩略图替代原图，单张内存从50-100MB降至~0.2MB
-            card_image = get_card_image_path(card)
-            if card_image.exists():
-                thumb_path = compress_image_for_list(card_image)
-                message_parts.append(GraiaImage(path=str(thumb_path)))
+                lines = [f"🎋 {card} ({len(versions)} 个版本)"]
+                for _, versioned_name, image_path in versions:
+                    author = config.get("card_authors", {}).get(versioned_name, {})
+                    author_name = author.get("user_name", "未知")
+                    line = f"{versioned_name} - 上传者: {author_name}"
+                    if server_url:
+                        line += f"\n🔗 {server_url}/{quote(image_path.name)}"
+                    lines.append(line)
+
+                fwd_node_list.append(
+                    ForwardNode(
+                        target=member,
+                        time=datetime.now(),
+                        message=MessageChain("\n".join(lines)),
+                    )
+                )
 
             fwd_node_list.append(
                 ForwardNode(
                     target=member,
                     time=datetime.now(),
-                    message=MessageChain(message_parts),
+                    message=MessageChain(f"共 {len(tarot_cards)} 张塔罗原始牌，已上传 {total_versions} 个图片版本"),
                 )
             )
 
-        fwd_node_list.append(
-            ForwardNode(
-                target=member,
-                time=datetime.now(),
-                message=MessageChain(f"共 {len(tarot_cards)} 张塔罗牌"),
-            )
-        )
+            await app.send_message(group, MessageChain(Forward(nodeList=fwd_node_list)))
+        except Exception as e:
+            await app.send_message(group, MessageChain([Plain(f"❌ 获取塔罗牌列表时出错: {str(e)}")]))
 
-        await app.send_message(
-            group,
-            MessageChain(Forward(nodeList=fwd_node_list))
-        )
-    except Exception as e:
-        error_msg = f"❌ 获取塔罗牌列表时出错: {str(e)}"
-        await app.send_message(
-            group,
-            MessageChain([Plain(error_msg)])
-        )
 
+_migration_changed = migrate_legacy_images_and_config()
+if _migration_changed:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(save_config(config))
+    else:
+        loop.create_task(save_config(config))
